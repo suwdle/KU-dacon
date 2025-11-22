@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import tqdm
 from typing import Iterable, List, Tuple
 
@@ -24,10 +25,12 @@ def preprocessing(data_path):
         .fillna(0.0)
     )
     return pivot
-import numpy as np
-import pandas as pd
 
-def build_training_data(pivot, pairs):
+def build_training_data(pivot, pairs, max_extra_lags=12):
+    """
+    기존 피처 + 더 긴 시계열 라그 + 다중 윈도우 통계 추가
+    max_extra_lags = 추가로 가져올 과거 시점 수 (예: 12 → b[t-3]~b[t-12])
+    """
     months = pivot.columns.to_list()
     n_months = len(months)
     rows = []
@@ -44,63 +47,87 @@ def build_training_data(pivot, pairs):
         a = pivot.loc[leader].values.astype(float)
         b = pivot.loc[follower].values.astype(float)
 
-        for t in range(max(lag + 2, 3), n_months - 1):
-            b_t   = b[t]
-            b_t_1 = b[t-1]
-            b_t_2 = b[t-2]
+        # t는 target이 존재하는 범위에서 생성
+        for t in range(max(lag + max_extra_lags + 1, 15), n_months - 1):
 
-            a_lag   = a[t-lag]
-            a_lag_1 = a[t-lag-1]
-            a_lag_2 = a[t-lag-2]
+            feature = {}
 
-            # Rolling stats (follower)
-            b_mean3 = np.mean(b[t-3:t]) if t >= 3 else np.mean(b[:t])
-            b_std3  = np.std(b[t-3:t])  if t >= 3 else np.std(b[:t])
+            # ─────────────────────────────────────────
+            # 1) FOLLOWER raw lags (b_t, b_t-1, ..., b_t-k)
+            # ─────────────────────────────────────────
+            feature["b_t"] = b[t]
+            for k in range(1, max_extra_lags + 1):
+                feature[f"b_t_{k}"] = b[t - k]
 
-            # Rolling stats (leader)
-            if (t-lag) >= 3:
-                a_mean3 = np.mean(a[t-lag-3:t-lag])
-                a_std3  = np.std(a[t-lag-3:t-lag])
-            else:
-                a_mean3 = float(a_lag)
-                a_std3  = 0.0
+            # ─────────────────────────────────────────
+            # 2) LEADER raw lags (a_lag, a_lag-1, ..., a_lag-k)
+            # ─────────────────────────────────────────
+            feature["a_lag"] = a[t - lag]
+            for k in range(1, max_extra_lags + 1):
+                feature[f"a_lag_{k}"] = a[t - lag - k]
 
-            # Momentum (follower)
-            mom_b_1 = b_t - b_t_1
-            mom_b_2 = b_t - b_t_2
+            # ─────────────────────────────────────────
+            # 3) Rolling windows
+            # follower windows: 3, 6, 12
+            # ─────────────────────────────────────────
+            for w in [3, 6, 12]:
+                feature[f"b_mean_w{w}"] = np.mean(b[t-w:t]) if t >= w else np.mean(b[:t])
+                feature[f"b_std_w{w}"]  = np.std(b[t-w:t])  if t >= w else np.std(b[:t])
 
-            # Momentum (leader)
-            mom_a_1 = a_lag - a_lag_1
-            mom_a_2 = a_lag - a_lag_2
+            # ─────────────────────────────────────────
+            # 4) Leader rolling windows
+            # ─────────────────────────────────────────
+            for w in [3, 6, 12]:
+                if (t - lag) >= w:
+                    segment = a[t-lag-w : t-lag]
+                    feature[f"a_mean_w{w}"] = np.mean(segment)
+                    feature[f"a_std_w{w}"]  = np.std(segment)
+                else:
+                    feature[f"a_mean_w{w}"] = float(a[t-lag])
+                    feature[f"a_std_w{w}"]  = 0.0
 
-            # Ratio features
-            ratio      = b_t / (a_lag + 1e-6)
-            ratio_prev = b_t_1 / (a_lag_1 + 1e-6)
-            ratio_diff = ratio - ratio_prev
-            ratio_lag2 = b_t_2 / (a_lag_2 + 1e-6)
+            # ─────────────────────────────────────────
+            # 5) Multi-horizon momentum
+            # follower
+            # ─────────────────────────────────────────
+            feature["mom_b_1"] = b[t] - b[t-1]
+            feature["mom_b_3"] = b[t] - b[t-3]
+            feature["mom_b_6"] = b[t] - b[t-6]
 
-            # Interaction features
-            interaction2 = (b_t - b_t_1) * (a_lag - a_lag_1)
+            # leader
+            feature["mom_a_1"] = a[t-lag] - a[t-lag-1]
+            feature["mom_a_3"] = a[t-lag] - a[t-lag-3]
+            feature["mom_a_6"] = a[t-lag] - a[t-lag-6]
 
-            target = b[t+1]
+            # ─────────────────────────────────────────
+            # 6) Ratio-based features
+            # ─────────────────────────────────────────
+            feature["ratio"] = b[t] / (a[t-lag] + 1e-6)
+            feature["ratio_1"] = b[t-1] / (a[t-lag-1] + 1e-6)
+            feature["ratio_3"] = b[t-3] / (a[t-lag-3] + 1e-6)
+            feature["ratio_6"] = b[t-6] / (a[t-lag-6] + 1e-6)
 
-            rows.append({
-                # 기존 특징들
-                "b_t": b_t, "b_t_1": b_t_1, "b_t_2": b_t_2,
-                "a_lag": a_lag, "a_lag_1": a_lag_1, "a_lag_2": a_lag_2,
-                "b_mean3": b_mean3, "b_std3": b_std3,
-                "max_corr": corr, "best_lag": float(lag),
+            # change in ratio
+            feature["ratio_diff"] = feature["ratio"] - feature["ratio_1"]
 
-                # 새 파생 피처들
-                "a_mean3": a_mean3, "a_std3": a_std3,
-                "mom_b_1": mom_b_1, "mom_b_2": mom_b_2,
-                "mom_a_1": mom_a_1, "mom_a_2": mom_a_2,
-                "ratio": ratio, "ratio_diff": ratio_diff,
-                "ratio_lag2": ratio_lag2,
-                "interaction2": interaction2,
+            # ─────────────────────────────────────────
+            # 7) Interaction
+            # ─────────────────────────────────────────
+            feature["interaction"] = feature["mom_b_1"] * feature["mom_a_1"]
+            feature["interaction6"] = feature["mom_b_6"] * feature["mom_a_6"]
 
-                # 타겟
-                "target": target
-            })
+            # ─────────────────────────────────────────
+            # 공행성 정보 그대로 유지
+            # ─────────────────────────────────────────
+            feature["max_corr"] = corr
+            feature["best_lag"] = float(lag)
+
+            # ─────────────────────────────────────────
+            # 타겟
+            # ─────────────────────────────────────────
+            target = b[t + 1]
+            feature["target"] = target
+
+            rows.append(feature)
 
     return pd.DataFrame(rows)
