@@ -7,34 +7,7 @@ def train(train_df, model=None):
     """
     log1p 변환을 적용한 LightGBM 회귀 학습
     """
-
-    feature_cols = [
-        # follower 시계열
-        "b_t", "b_t_1", "b_t_2",
-
-        # leader lagged series
-        "a_lag", "a_lag_1", "a_lag_2",
-
-        # follower rolling
-        "b_mean3", "b_std3",
-
-        # 공행성
-        "max_corr", "best_lag",
-
-        # leader rolling
-        "a_mean3", "a_std3",
-
-        # momentum
-        "mom_b_1", "mom_b_2",
-        "mom_a_1", "mom_a_2",
-
-        # ratio features
-        "ratio", "ratio_diff", "ratio_lag2",
-
-        # interaction
-        "interaction2",
-    ]
-
+    feature_cols = [c for c in train_df.columns if c not in ["target"]]
     # 기본 모델 세팅
     if model is None:
         model = LGBMRegressor(
