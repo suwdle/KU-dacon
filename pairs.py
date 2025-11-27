@@ -56,7 +56,7 @@ def cross_corr(x, y, lag):
 
 def find_comovement_pairs(
     pivot,
-    max_lag=6,
+    max_lag=8,
     min_nonzero=10,
     corr_threshold=0.35,
 ):
@@ -96,8 +96,8 @@ def find_comovement_pairs(
 
                 score = (
                     0.70 * abs(p)
-                    + 0.20 * abs(cc)
-                    + 0.10 * abs(dc)
+                    + 0.10 * abs(cc)
+                    + 0.20 * abs(dc)
                 )
 
                 if score > best_score:

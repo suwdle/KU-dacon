@@ -52,31 +52,18 @@ def build_training_data(pivot, pairs, max_extra_lags=12):
 
             feature = {}
 
-            # ─────────────────────────────────────────
-            # 1) FOLLOWER raw lags (b_t, b_t-1, ..., b_t-k)
-            # ─────────────────────────────────────────
             feature["b_t"] = b[t]
             for k in range(1, max_extra_lags + 1):
                 feature[f"b_t_{k}"] = b[t - k]
 
-            # ─────────────────────────────────────────
-            # 2) LEADER raw lags (a_lag, a_lag-1, ..., a_lag-k)
-            # ─────────────────────────────────────────
             feature["a_lag"] = a[t - lag]
             for k in range(1, max_extra_lags + 1):
                 feature[f"a_lag_{k}"] = a[t - lag - k]
 
-            # ─────────────────────────────────────────
-            # 3) Rolling windows
-            # follower windows: 3, 6, 12
-            # ─────────────────────────────────────────
             for w in [3, 6, 12]:
                 feature[f"b_mean_w{w}"] = np.mean(b[t-w:t]) if t >= w else np.mean(b[:t])
                 feature[f"b_std_w{w}"]  = np.std(b[t-w:t])  if t >= w else np.std(b[:t])
 
-            # ─────────────────────────────────────────
-            # 4) Leader rolling windows
-            # ─────────────────────────────────────────
             for w in [3, 6, 12]:
                 if (t - lag) >= w:
                     segment = a[t-lag-w : t-lag]
@@ -86,10 +73,6 @@ def build_training_data(pivot, pairs, max_extra_lags=12):
                     feature[f"a_mean_w{w}"] = float(a[t-lag])
                     feature[f"a_std_w{w}"]  = 0.0
 
-            # ─────────────────────────────────────────
-            # 5) Multi-horizon momentum
-            # follower
-            # ─────────────────────────────────────────
             feature["mom_b_1"] = b[t] - b[t-1]
             feature["mom_b_3"] = b[t] - b[t-3]
             feature["mom_b_6"] = b[t] - b[t-6]
@@ -99,9 +82,6 @@ def build_training_data(pivot, pairs, max_extra_lags=12):
             feature["mom_a_3"] = a[t-lag] - a[t-lag-3]
             feature["mom_a_6"] = a[t-lag] - a[t-lag-6]
 
-            # ─────────────────────────────────────────
-            # 6) Ratio-based features
-            # ─────────────────────────────────────────
             feature["ratio"] = b[t] / (a[t-lag] + 1e-6)
             feature["ratio_1"] = b[t-1] / (a[t-lag-1] + 1e-6)
             feature["ratio_3"] = b[t-3] / (a[t-lag-3] + 1e-6)
@@ -110,21 +90,12 @@ def build_training_data(pivot, pairs, max_extra_lags=12):
             # change in ratio
             feature["ratio_diff"] = feature["ratio"] - feature["ratio_1"]
 
-            # ─────────────────────────────────────────
-            # 7) Interaction
-            # ─────────────────────────────────────────
             feature["interaction"] = feature["mom_b_1"] * feature["mom_a_1"]
             feature["interaction6"] = feature["mom_b_6"] * feature["mom_a_6"]
 
-            # ─────────────────────────────────────────
-            # 공행성 정보 그대로 유지
-            # ─────────────────────────────────────────
             feature["max_corr"] = corr
             feature["best_lag"] = float(lag)
 
-            # ─────────────────────────────────────────
-            # 타겟
-            # ─────────────────────────────────────────
             target = b[t + 1]
             feature["target"] = target
 
